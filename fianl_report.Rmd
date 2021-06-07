@@ -1,0 +1,331 @@
+---
+title: "Final Project: NYPD Shooting Incident Data Report"
+author: "Daekyum Kim"
+date: "June/6/2021"
+output: html_document
+---
+# ***Table of Contents***
+
+* Introduction
+
+* Step 1. Create Markdown
+
+* Step 2. Cleaning Data
+
+* Step 3. Visualizing and Modeling Data
+
+  + 3.1 Monthly Fatality Cases
+  
+  + 3.2 Simple Model for Fatalities
+  
+  + 3.3 Distribution of Fatalities by District
+
+* Step 4. Bias Identification & Conclusion
+
+----------------------------------------------------
+
+## **Introduction**
+
+In this report, I wanted to analyze the NYPD Shooting Incident data with tools 
+
+I learned in the lectures. I was especially interested in finding out how many of 
+
+these shootings led to fatalities and in which of four counties the fatalities occurred most often.
+
+I was able to find and use the historic NYPD Shooting Incident data dating between year 2006 and 2020.
+
+With materials covered in the lecture, I performed clean up, visualization and modeling of the data.
+
+
+## **Step 1. Create Markdown**
+
+As the first step, I loaded up the tidyverse package.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+Loaded tidyverse using *library(tidyverse)*
+
+---------------------------------------------
+
+## **Step 2. Cleaning Data**
+
+
+```{r eda}
+
+# Load in the dataset
+
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+nypd_shooting <- read_csv(url_in)
+
+summary(nypd_shooting)
+
+```
+
+There are 23568 entries with 19 columns in this dataframe.
+
+```{r clean_up, echo=TRUE}
+
+# Change column names to lower cases
+
+names(nypd_shooting) <- tolower(names(nypd_shooting))
+
+# Change type of Occur_Date from characters to time date
+
+nypd_shooting$occur_date = as.Date(nypd_shooting$occur_date, format = "%m/%d/%Y")
+
+# Dropping x_coord_cd, y_coord_cd, latitude, longitude as they are redundant.
+
+nypd_shooting <- nypd_shooting[, -c(15:18)]
+
+# Change some column names to clarify
+
+# Change BORO to district & statistical_murder_flag to is_murder
+
+colnames(nypd_shooting)[4] <- "district"
+
+colnames(nypd_shooting)[8] <- "is_murder"
+
+# Then look how many entries are na
+
+cbind(lapply(lapply(nypd_shooting, is.na), sum))
+```
+
+There are five columns with missing entries: 
+
+1. jurisdiction_code
+2. location_desc
+3. perp_age_group
+4. perp_sex
+5. perp_race
+
+I will dive deeper to see if I can fill in those na entries column by column
+
+```{r clean_up2, echo=TRUE}
+
+# Rows with missing jurisdiction_code
+
+nypd_shooting[is.na(nypd_shooting$jurisdiction_code), ]
+
+# Retrieve jurisdiction_code for precinct 25 and 104
+
+view(nypd_shooting[nypd_shooting$precinct == 25, ])
+
+# Unclear whether jurisdiction_code is 0 or 2. Will remove the entry.
+
+view(nypd_shooting[nypd_shooting$precinct == 104, ])
+
+# Clearly every column with precinct 104 has jurisdiction_code 0 so fill it in
+
+nypd_shooting$jurisdiction_code[is.na(nypd_shooting$jurisdiction_code) == 1 & nypd_shooting$precinct == 104] <- 0
+
+# Dropping row with precinct 25 and missing jurisdiction_code
+nypd_shooting2 <- drop_na(nypd_shooting, jurisdiction_code)
+
+cbind(lapply(lapply(nypd_shooting2, is.na), sum))
+
+# Cleaned up the jurisdiction_code. Off to next column: location_desc
+
+# Unable to tell why location_desc is na
+nypd_shooting2[is.na(nypd_shooting2$location_desc) == 1, ]
+
+# Investigate what values are in location_desc column
+unique(nypd_shooting2$location_desc)
+
+# Decided to replace na with unspecified
+nypd_shooting2$location_desc <- replace_na(nypd_shooting2$location_desc, "unspecified")
+
+# See if there's any missing values
+sum(is.na(nypd_shooting2$location_desc))
+
+```
+
+Columns with na:
+
+1. ~~jurisdiction_code~~
+2. ~~location_desc~~
+3. perp_age_group
+4. perp_sex
+5. perp_race
+
+***TABLE***
+
+|Columns | # Na | Unique Entries|
+|:------:|:-----:|:-------------:|
+|perp_sex| `r sum(is.na(nypd_shooting2$perp_sex))` |`r unique(nypd_shooting2$perp_sex)`|
+|perp_race|`r sum(is.na(nypd_shooting2$perp_race))`|`r unique(nypd_shooting2$perp_race)`|
+|perp_age_group|`r sum(is.na(nypd_shooting2$perp_age_group))`|`r unique(nypd_shooting2$perp_age_group)`|
+
+
+There are same number of na entries for columns perp_sex and perp_race. I suspect those entries are identical. There are 34 more entries with na for column perp_age_group. Those will require further inspection to ensure. 
+
+```{r clean_up3, echo=TRUE}
+
+# Check how many rows are there with na in columns perp_sex & perp_race & perp_age_group
+nrow(nypd_shooting2[is.na(nypd_shooting2$perp_sex) & is.na(nypd_shooting2$perp_race) & is.na(nypd_shooting2$perp_age_group), ])
+
+# Before going further as there are 34 more rows with perp_age_group, I want to see if these are all part of unknown
+
+# so perp_sex & perp_race != na and perp_age_group = na
+nypd_shooting2[!is.na(nypd_shooting2$perp_sex) & !is.na(nypd_shooting2$perp_race) & is.na(nypd_shooting2$perp_age_group), ]
+
+# And I see that every rows are with unknowns for other two columns so I can write these entries with "UNKNOWN"
+
+# As suspected those are in same entries. Investigate what are unique entries for these columns (matches total na = 8425)
+unique(nypd_shooting2$perp_sex)
+unique(nypd_shooting2$perp_race)
+unique(nypd_shooting2$perp_age_group)
+
+# Replace na with "U", "UNKNOWN", "UNKNOWN" for perp_sex, perp_race and perp_age_group
+nypd_shooting2$perp_sex <- replace_na(nypd_shooting2$perp_sex, "U")
+nypd_shooting2$perp_race <- replace_na(nypd_shooting2$perp_race, "UNKONWN")
+nypd_shooting2$perp_age_group <- replace_na(nypd_shooting2$perp_age_group, "UNKONWN")
+
+
+cbind(lapply(lapply(nypd_shooting2, is.na), sum))
+
+
+# Give the dataframe new name 
+nypd_clean <- nypd_shooting2
+
+```
+
+-----------------------------------------------
+
+## **Step 3. Visualizing and Modeling Data**
+
+### **3.1 Monthly Fatality Cases**
+
+As a first visualization, I wanted to see if there's any trend in monthly fatality cases as time passed by.
+
+```{r visualize1, echo=TRUE}
+library(dplyr)
+library(lubridate)
+
+
+# Plot 1. Monthly Fatality cases
+
+
+
+# daily table
+nypd_plot1 <- nypd_clean %>%
+ group_by(occur_date) %>%
+ summarize(total_murder = sum(is_murder))
+
+# Monthly table
+monthly <- nypd_plot1 %>%
+           mutate(month = month(occur_date), year = year(occur_date)) %>%
+          group_by(year, month) %>%
+           summarize(monthly_murder = sum(total_murder))
+
+# For plot X axis
+monthly$year_month <- with(monthly, sprintf("%d-%02d", year, month))
+
+monthly
+```
+
+I aggregated fatality data to monthly level starting January of 2016.
+
+```{r visualize2, echo=TRUE}
+
+# Visualization
+monthly %>%
+ filter(monthly_murder > 0) %>%
+ggplot(aes(x = year_month, y = monthly_murder)) +
+ geom_line(aes(color = "monthly_murder")) +
+ geom_point(aes(color = "monthly_murder"))
+
+```
+
+Upon inspecting the graph, I see downward trends in number of fatality cases reported every month.
+
+I wanted to put together a simple linear regression model to see if district and vic_age_group has any impact on this downward trend to shooting fatalities.
+
+### **3.2 Simple Model for Fatalities**
+
+```{r modeling, echo=TRUE}
+
+mod <- lm(is_murder ~ district + vic_age_group, data = nypd_clean)
+
+summary(mod)
+
+```
+
+It shows there is statistical significance between vic_age_group(s) and fatalities. Of course there are more factors that would be leading to 
+
+less fatalities, such as systemic improvements in first respondents and medical cares but those are not provided in our data.
+
+### **3.3 Distribution of Fatalities by District**
+
+I want to see what percentage of shooting incidents lead to fatality
+
+```{r visualize3, echo=TRUE}
+
+sum(nypd_clean$is_murder)
+
+perc_fatality <- sum(nypd_clean$is_murder) / 23567 * 100
+
+perc_fatality
+
+```
+There are 4,488 cases that led to fatalities out of 23,567 total shooting incidents.
+
+That is about 19%
+
+
+As a second visualization, I wanted to further inspect how it is distributed among districts.
+
+```{r visualize4, echo=TRUE}
+# Plot 2. Visualize % of murders in each districts
+nypd_plot2 <- nypd_clean %>%
+group_by(district) %>%
+summarize(num_murders = sum(is_murder))
+
+# Calculate %
+nypd_plot2$pct <- nypd_plot2$num_murders / sum(nypd_plot2$num_murders) * 100
+
+nypd_plot2
+
+# Bargraph first
+bp<- ggplot(nypd_plot2, aes(x="", y=num_murders, fill=district))+
+     geom_bar(width = 1, stat = "identity")
+
+pie <- bp + coord_polar("y", start = 0) + labs(title = "Total Fatalitiy Cases By District")
+
+pie
+
+```
+
+Brooklyn and Bronx were two districts with largest share of fatality cases.
+
+These two visualizations raised additional questions that  I should investigate:
+
+1. In first visualization, there were some outliers. What was the cause for the spike in number of fatal shooting reports? 
+
+2. In second visualization, What makes Brooklyn and Bronx take up largest shares of fatality cases?
+
+With given data, it is hard to answer those questions. With granular data, I might be able to answer these follow up questions or I could research on my own to answer those questions.
+
+----------------------------------------------------
+
+## **Step 4. Bias Identification & Conclusion**
+
+Based on the visualizations and data analysis, I can conclude monthly fatalities in shooting incidents are in downward trend.
+
+Also large portion of fatalities cases are reported in Bronx and Brooklyn. 
+
+My personal bias for the reason is probably because Bronx and Brooklyn have active gang activities. In order to mitigate this bias, I would need detailed demography data to make sure I have reasonable backing from data.
+
+-----------------------------------------------------
+
+```{r session, echo=TRUE}
+
+sessionInfo(package = NULL)
+
+osVersion
+
+```
